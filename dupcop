@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const mkdirSync = require('mkdir-recursive').mkdirSync
+const inquirer = require('inquirer');
+const folderPrompt = require('inquirer-directory');
+const mkdirp = require('node-mkdirp');
+
+const cwd = process.cwd();
+console.log(cwd);
+
+inquirer.registerPrompt('folder', folderPrompt);
+
+const capitalize = (string) => string.charAt(0).toUpperCase() + string.slice(1);
+const getVariants = (string) => ({
+  lower: string.toLowerCase(),
+  capitalized: capitalize(string),
+  upper: string.toUpperCase()
+});
+
+const substitute = (string, substitutionsPairs) => {
+  for (let pair of substitutionsPairs) {
+    const what = getVariants(pair[0]);
+    const to = getVariants(pair[1]);
+    Object.keys(what).forEach(casing => {
+      const regexp = RegExp(what[casing], 'gm');
+      string = string.replace(regexp, to[casing]);
+    })
+  }
+  return string;
+}
+
+const groupPair = (arrayOfItems) => {
+  const dup = Array.from(arrayOfItems);
+  const res = [];
+  while (dup.length) {
+    res.push(dup.splice(0, 2));
+  }
+  return res;
+}
+
+const getLongestCommonStartString = (str1, str2) => {
+  let i = 0;
+  while (str1[i] === str2[i] && i < str1.length && i < str2.length) {
+    i++
+  }
+  return str1.slice(0, i);
+}
+
+const copyFolder = (relativePathFrom, relativePathTo, substitutions, rootPath) => {
+  console.log('copyFolder invoked with ', relativePathFrom, relativePathTo, substitutions, rootPath);
+  const pathFrom = path.join(rootPath, relativePathFrom);
+  const pathTo = path.join(rootPath, relativePathTo);
+  const dirEntries = fs.readdirSync(pathFrom);
+
+  for (let entry of dirEntries) {
+    const entryFullPathFrom = path.join(pathFrom, entry);
+    const relativePartFrom = path.join(relativePathFrom, entry);
+
+    const entryStat = fs.statSync(entryFullPathFrom);
+
+    const newEntryName = substitute(entry, substitutions);
+    const entryFullPathTo = path.join(pathTo, newEntryName);
+    const relativePartTo = path.join(relativePathTo, newEntryName);
+    if (entryStat.isDirectory()) {
+      console.log('creaing directory ', entryFullPathTo)
+      fs.mkdirSync(entryFullPathTo);
+      copyFolder(relativePartFrom, relativePartTo, substitutions, rootPath)
+    } else {
+      const content = fs.readFileSync(entryFullPathFrom).toString();
+      console.log('writing to file ', entryFullPathTo)
+      fs.writeFileSync(entryFullPathTo, substitute(content, substitutions));
+    }
+  }
+};
+
+inquirer.prompt([
+  {
+    type: 'folder',
+    name: 'fromDirectory',
+    message: 'Which folder to duplicate',
+    basePath: cwd,
+  },
+  {
+    type: 'input',
+    name: 'substitutions',
+    message: 'Please provide pair of substitutions to take care of, separated by space',
+    validate: function validateSubstitutions(subs) {
+      return subs.every(pair => pair.length === 2) || 'Either empty or uneven amount of substitutions';
+    },
+    filter: function formatSubstitutions(input) {
+      return groupPair(input.split(' '));
+    },
+  },
+  {
+    type: 'input',
+    name: 'toDirectory',
+    message: 'Where to duplicate folder',
+    default: function defaultToFolder(answer) {
+      return answer.fromDirectory
+    },
+  },
+]).then(function (answers) {
+    const { fromDirectory, toDirectory, substitutions } = answers;
+    const rootPath = cwd;
+    mkdirSync(toDirectory);
+    try {
+      copyFolder(fromDirectory, toDirectory, substitutions, rootPath);
+    } catch (e) {
+      console.log('Error: ', e);
+    }
+
+
+});
